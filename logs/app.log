@@ -1,0 +1,5 @@
+2026-04-14 00:58:17,450 | INFO | salesforce_service | Running SOQL: SELECT Id, Name, Type, Industry, LastModifiedDate FROM Account ORDER BY LastModifiedDate
+2026-04-14 00:58:18,636 | INFO | ingestion_service | Schema changed for Account. Using new version v1
+2026-04-14 00:58:19,028 | INFO | salesforce_service | Running SOQL: SELECT Id, FirstName, LastName, Email, LastModifiedDate FROM Contact ORDER BY LastModifiedDate
+2026-04-14 00:58:19,249 | INFO | ingestion_service | Schema changed for Contact. Using new version v1
+2026-04-14 00:58:19,302 | INFO | ingestion_service | Run completed. run_id=dbceef62-37b1-4066-b2d3-67be761c922a

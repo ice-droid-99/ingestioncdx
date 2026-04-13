@@ -1,0 +1,20 @@
+{
+  "tables": [
+    {
+      "table": "Account",
+      "columns": ["Id", "Name", "Type", "Industry", "LastModifiedDate"],
+      "load_type": "full",
+      "watermark_column": "LastModifiedDate",
+      "api_mode": "rest",
+      "active": true
+    },
+    {
+      "table": "Contact",
+      "columns": ["Id", "FirstName", "LastName", "Email", "LastModifiedDate"],
+      "load_type": "incremental",
+      "watermark_column": "LastModifiedDate",
+      "api_mode": "rest",
+      "active": true
+    }
+  ]
+}
