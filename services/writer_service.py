@@ -1,28 +1,31 @@
-import os
+import io
 import pandas as pd
-from utils.file_utils import ensure_dir
 from utils.datetime_utils import utc_today
+from utils.s3_io import s3_write_bytes
 
 class WriterService:
-    def __init__(self, output_root: str, output_format: str = "parquet"):
-        self.output_root = output_root
+    def __init__(self, output_prefix_uri: str, output_format: str = "parquet"):
+        # example: s3://demo445/output/
+        if not output_prefix_uri.startswith("s3://"):
+            raise ValueError("WriterService expects an S3 prefix URI (s3://...)")
+        self.output_prefix_uri = output_prefix_uri.rstrip("/") + "/"
         self.output_format = output_format
 
     def write(self, load_type: str, table: str, version: int, run_id: str, records: list):
         date_part = utc_today()
-        base_path = os.path.join(
-            self.output_root, load_type, table, f"v{version}", f"load_date={date_part}"
-        )
-        ensure_dir(base_path)
-
+        key_prefix = f"{load_type}/{table}/v{version}/load_date={date_part}/"
         file_name = f"{table}_{run_id}"
+
         df = pd.DataFrame(records)
 
         if self.output_format == "csv":
-            out_path = os.path.join(base_path, f"{file_name}.csv")
-            df.to_csv(out_path, index=False)
-        else:
-            out_path = os.path.join(base_path, f"{file_name}.parquet")
-            df.to_parquet(out_path, index=False)
+            csv_bytes = df.to_csv(index=False).encode("utf-8")
+            uri = f"{self.output_prefix_uri}{key_prefix}{file_name}.csv"
+            s3_write_bytes(uri, csv_bytes, content_type="text/csv")
+            return uri
 
-        return out_path
+        buf = io.BytesIO()
+        df.to_parquet(buf, index=False)
+        uri = f"{self.output_prefix_uri}{key_prefix}{file_name}.parquet"
+        s3_write_bytes(uri, buf.getvalue(), content_type="application/octet-stream")
+        return uri
