@@ -1,6 +1,6 @@
 import io
 import pandas as pd
-from utils.datetime_utils import utc_today
+from utils.datetime_utils import utc_compact_ts
 from utils.s3_io import s3_write_bytes
 
 class WriterService:
@@ -11,8 +11,8 @@ class WriterService:
         self.output_format = output_format
 
     def write(self, load_type: str, table: str, version: int, run_id: str, records: list):
-        date_part = utc_today()
-        key_prefix = f"{load_type}/{table}/v{version}/load_date={date_part}/"
+        load_ts = utc_compact_ts()
+        key_prefix = f"{load_type}/{table}/v{version}/load_ts={load_ts}/"
         file_name = f"{table}_{run_id}"
 
         df = pd.DataFrame(records)

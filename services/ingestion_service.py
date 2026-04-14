@@ -13,7 +13,6 @@ logger = get_logger("ingestion_service")
 
 class IngestionService:
     def __init__(self):
-        # Defaults set to your bucket demo445
         self.config_uri = os.environ.get("CONFIG_URI", "s3://demo445/config/ingestion_config.json")
         self.output_prefix = os.environ.get("OUTPUT_PREFIX_URI", "s3://demo445/output/")
         self.log_prefix = os.environ.get("LOG_PREFIX_URI", "s3://demo445/log/audit/")
@@ -41,8 +40,10 @@ class IngestionService:
         base = f"SELECT {', '.join(columns)} FROM {table}"
         conditions = []
 
+        # For incremental runs, apply watermark filter if watermark exists.
+        # Salesforce datetime literal must NOT be quoted.
         if load_type == "incremental" and wm_col and last_watermark:
-            conditions.append(f"{wm_col} > {self._quote_soql(last_watermark)}")
+            conditions.append(f"{wm_col} > {last_watermark}")
 
         if extra_where:
             conditions.append(f"({extra_where})")
@@ -55,15 +56,9 @@ class IngestionService:
 
         return base
 
-    @staticmethod
-    def _quote_soql(value: str):
-        escaped = value.replace("'", "\\'")
-        return f"'{escaped}'"
-
     def run(self):
         run_id = str(uuid.uuid4())
         tables = self.config.get("tables", [])
-
         logger.info(f"Starting run_id={run_id}, tables={len(tables)}")
 
         for table_cfg in tables:
@@ -112,11 +107,15 @@ class IngestionService:
                         records=records
                     )
 
-                    if load_type == "incremental" and wm_col:
+                    # Watermark update for BOTH full and incremental loads
+                    # based on max value of watermark column in extracted rows.
+                    if wm_col:
                         wm_values = [r.get(wm_col) for r in records if r.get(wm_col) is not None]
                         if wm_values:
                             watermark_end = max(wm_values)
                             self.state_service.set_watermark(table, watermark_end)
+                else:
+                    logger.info(f"No rows for table={table}; watermark unchanged")
 
             except Exception as e:
                 status = "FAILED"
