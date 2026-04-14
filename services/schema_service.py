@@ -9,7 +9,6 @@ class SchemaService:
 
     @staticmethod
     def _schema_signature(columns):
-        # minimal signature (names only). Later we can include types.
         return "|".join(sorted(columns))
 
     def get_version_and_update_if_needed(self, table: str, current_columns: list):

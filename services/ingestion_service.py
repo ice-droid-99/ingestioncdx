@@ -13,7 +13,7 @@ logger = get_logger("ingestion_service")
 
 class IngestionService:
     def __init__(self):
-        # Must be set in ECS env vars
+        # Defaults set to your bucket demo445
         self.config_uri = os.environ.get("CONFIG_URI", "s3://demo445/config/ingestion_config.json")
         self.output_prefix = os.environ.get("OUTPUT_PREFIX_URI", "s3://demo445/output/")
         self.log_prefix = os.environ.get("LOG_PREFIX_URI", "s3://demo445/log/audit/")
@@ -82,7 +82,6 @@ class IngestionService:
             error_message = ""
             status = "SUCCESS"
             row_count = 0
-            audit_uri = ""
 
             try:
                 soql = self._build_soql(table_cfg, watermark_start)

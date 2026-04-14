@@ -5,7 +5,6 @@ from utils.s3_io import s3_write_bytes
 
 class WriterService:
     def __init__(self, output_prefix_uri: str, output_format: str = "parquet"):
-        # example: s3://demo445/output/
         if not output_prefix_uri.startswith("s3://"):
             raise ValueError("WriterService expects an S3 prefix URI (s3://...)")
         self.output_prefix_uri = output_prefix_uri.rstrip("/") + "/"
