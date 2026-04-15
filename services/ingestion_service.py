@@ -30,32 +30,6 @@ class IngestionService:
             output_format=os.getenv("DEFAULT_OUTPUT_FORMAT", "parquet")
         )
 
-    def _build_soql(self, table_cfg: dict, last_watermark: str | None):
-        table = table_cfg["table"]
-        columns = table_cfg["columns"]
-        load_type = table_cfg["load_type"]
-        wm_col = table_cfg.get("watermark_column")
-        extra_where = table_cfg.get("where_clause")
-
-        base = f"SELECT {', '.join(columns)} FROM {table}"
-        conditions = []
-
-        # For incremental runs, apply watermark filter if watermark exists.
-        # Salesforce datetime literal must NOT be quoted.
-        if load_type == "incremental" and wm_col and last_watermark:
-            conditions.append(f"{wm_col} > {last_watermark}")
-
-        if extra_where:
-            conditions.append(f"({extra_where})")
-
-        if conditions:
-            base += " WHERE " + " AND ".join(conditions)
-
-        if wm_col:
-            base += f" ORDER BY {wm_col}"
-
-        return base
-
     def run(self):
         run_id = str(uuid.uuid4())
         tables = self.config.get("tables", [])
@@ -68,6 +42,7 @@ class IngestionService:
             table = table_cfg["table"]
             load_type = table_cfg["load_type"]
             wm_col = table_cfg.get("watermark_column")
+            extra_where = table_cfg.get("where_clause")
 
             start_ts = utc_now_iso()
             watermark_start = self.state_service.get_watermark(table)
@@ -79,24 +54,31 @@ class IngestionService:
             row_count = 0
 
             try:
-                soql = self._build_soql(table_cfg, watermark_start)
-                records = self.sf_service.query_all(soql)
-                row_count = len(records)
+                # 1) Fetch metadata-driven columns
+                described_columns = self.sf_service.describe_object_fields(table)
 
-                if row_count == 0:
-                    current_columns = table_cfg["columns"]
-                else:
-                    all_cols = set()
-                    for r in records:
-                        all_cols.update(r.keys())
-                    current_columns = sorted(all_cols)
+                if wm_col and wm_col not in described_columns:
+                    raise ValueError(f"Configured watermark_column '{wm_col}' not found/queryable in {table}")
 
+                # 2) Schema registry/versioning
                 schema_version, changed = self.schema_service.get_version_and_update_if_needed(
                     table=table,
-                    current_columns=current_columns
+                    current_columns=described_columns
                 )
                 if changed:
                     logger.info(f"Schema changed for {table}. Using v{schema_version}")
+
+                # 3) Chunked query + merge by Id for wide objects
+                records = self.sf_service.query_all_chunked(
+                    table=table,
+                    columns=described_columns,
+                    load_type=load_type,
+                    wm_col=wm_col,
+                    last_watermark=watermark_start,
+                    extra_where=extra_where,
+                    max_query_length=int(os.getenv("SOQL_MAX_QUERY_LENGTH", "18000"))
+                )
+                row_count = len(records)
 
                 if row_count > 0:
                     output_uri = self.writer_service.write(
@@ -107,8 +89,7 @@ class IngestionService:
                         records=records
                     )
 
-                    # Watermark update for BOTH full and incremental loads
-                    # based on max value of watermark column in extracted rows.
+                    # Watermark update for BOTH full and incremental
                     if wm_col:
                         wm_values = [r.get(wm_col) for r in records if r.get(wm_col) is not None]
                         if wm_values:

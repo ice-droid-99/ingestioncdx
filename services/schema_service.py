@@ -12,19 +12,27 @@ class SchemaService:
         return "|".join(sorted(columns))
 
     def get_version_and_update_if_needed(self, table: str, current_columns: list):
-        current_sig = self._schema_signature(current_columns)
+        current_cols_sorted = sorted(set(current_columns))
+        current_sig = self._schema_signature(current_cols_sorted)
         table_info = self.registry.get(table)
 
         if not table_info:
-            self.registry[table] = {"current_version": 1, "signature": current_sig}
+            self.registry[table] = {
+                "current_version": 1,
+                "signature": current_sig,
+                "columns": current_cols_sorted
+            }
             s3_write_json(self.schema_registry_uri, self.registry)
             return 1, True
 
-        if table_info["signature"] != current_sig:
-            table_info["current_version"] += 1
-            table_info["signature"] = current_sig
-            self.registry[table] = table_info
+        if table_info.get("signature") != current_sig:
+            new_version = int(table_info.get("current_version", 1)) + 1
+            self.registry[table] = {
+                "current_version": new_version,
+                "signature": current_sig,
+                "columns": current_cols_sorted
+            }
             s3_write_json(self.schema_registry_uri, self.registry)
-            return table_info["current_version"], True
+            return new_version, True
 
-        return table_info["current_version"], False
+        return int(table_info.get("current_version", 1)), False
