@@ -1,5 +1,6 @@
 import os
 from simple_salesforce import Salesforce
+from simple_salesforce.exceptions import SalesforceMalformedRequest
 from utils.logger import get_logger
 
 logger = get_logger("salesforce_service")
@@ -19,14 +20,17 @@ class SalesforceService:
 
         fields = []
         for f in meta.get("fields", []):
-            if f.get("queryable", False) and not f.get("deprecatedAndHidden", False):
-                fields.append(f["name"])
+            # IMPORTANT: do not filter by f["queryable"] (often not present per field)
+            if not f.get("deprecatedAndHidden", False):
+                name = f.get("name")
+                if name:
+                    fields.append(name)
 
         fields = sorted(set(fields))
         if "Id" not in fields:
             fields.insert(0, "Id")
 
-        logger.info(f"Describe {object_name}: {len(fields)} queryable fields")
+        logger.info(f"Describe {object_name}: {len(fields)} fields discovered")
         return fields
 
     def query_all(self, soql: str):
@@ -49,29 +53,21 @@ class SalesforceService:
         extra_where: str | None,
         max_query_length: int = 18000
     ) -> list[dict]:
-        """
-        Handles large schemas by chunking columns and merging by Id.
-        Always includes Id in each chunk query.
-        """
         cols = sorted(set(columns))
         if "Id" not in cols:
             cols.insert(0, "Id")
 
-        # Build static suffix once
         conditions = []
         if load_type == "incremental" and wm_col and last_watermark:
-            # Salesforce datetime literal should NOT be quoted
+            # SOQL datetime literal must not be quoted
             conditions.append(f"{wm_col} > {last_watermark}")
         if extra_where:
             conditions.append(f"({extra_where})")
 
-        where_clause = ""
-        if conditions:
-            where_clause = " WHERE " + " AND ".join(conditions)
-
+        where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         order_clause = f" ORDER BY {wm_col}" if wm_col else ""
 
-        # Split columns into chunks by estimated SOQL length
+        # chunk by query length
         chunks = []
         current = []
         for c in cols:
@@ -85,27 +81,31 @@ class SalesforceService:
         if current:
             chunks.append(current)
 
-        # Ensure every chunk has Id
-        normalized_chunks = []
+        # ensure Id in every chunk
+        fixed = []
         for ch in chunks:
             if "Id" not in ch:
                 ch = ["Id"] + ch
-            # keep order stable and unique
             seen = set()
             uniq = []
             for x in ch:
                 if x not in seen:
                     uniq.append(x)
                     seen.add(x)
-            normalized_chunks.append(uniq)
+            fixed.append(uniq)
 
-        logger.info(f"{table}: querying in {len(normalized_chunks)} chunk(s)")
+        logger.info(f"{table}: querying in {len(fixed)} chunk(s)")
 
-        merged = {}  # id -> dict row
-        for idx, ch in enumerate(normalized_chunks, start=1):
+        merged = {}  # Id -> row dict
+        for i, ch in enumerate(fixed, start=1):
             soql = f"SELECT {', '.join(ch)} FROM {table}{where_clause}{order_clause}"
-            logger.info(f"{table}: chunk {idx}/{len(normalized_chunks)}")
-            recs = self.query_all(soql)
+            try:
+                logger.info(f"{table}: chunk {i}/{len(fixed)}")
+                recs = self.query_all(soql)
+            except SalesforceMalformedRequest as e:
+                # Skip bad field chunks gracefully; keep ingestion moving
+                logger.warning(f"{table}: skipping chunk {i} due to malformed request: {e}")
+                continue
 
             for r in recs:
                 rid = r.get("Id")
