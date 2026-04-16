@@ -1,4 +1,5 @@
 from utils.s3_io import s3_read_json, s3_write_json
+from utils.datetime_utils import utc_now_iso
 
 class SchemaService:
     def __init__(self, schema_registry_uri: str):
@@ -9,30 +10,51 @@ class SchemaService:
 
     @staticmethod
     def _schema_signature(columns):
-        return "|".join(sorted(columns))
+        return "|".join(sorted(set(columns)))
 
-    def get_version_and_update_if_needed(self, table: str, current_columns: list):
-        current_cols_sorted = sorted(set(current_columns))
-        current_sig = self._schema_signature(current_cols_sorted)
+    def _append_new_version(self, table: str, columns: list[str], signature: str):
+        now = utc_now_iso()
         table_info = self.registry.get(table)
 
         if not table_info:
-            self.registry[table] = {
-                "current_version": 1,
-                "signature": current_sig,
-                "columns": current_cols_sorted
+            table_info = {
+                "current_version": 0,
+                "current_signature": "",
+                "versions": []
             }
-            s3_write_json(self.schema_registry_uri, self.registry)
-            return 1, True
 
-        if table_info.get("signature") != current_sig:
-            new_version = int(table_info.get("current_version", 1)) + 1
-            self.registry[table] = {
-                "current_version": new_version,
-                "signature": current_sig,
-                "columns": current_cols_sorted
-            }
-            s3_write_json(self.schema_registry_uri, self.registry)
-            return new_version, True
+        new_version_num = int(table_info.get("current_version", 0)) + 1
+        version_entry = {
+            "version": new_version_num,
+            "signature": signature,
+            "columns": sorted(set(columns)),
+            "created_at": now
+        }
+
+        table_info["versions"].append(version_entry)
+        table_info["current_version"] = new_version_num
+        table_info["current_signature"] = signature
+        self.registry[table] = table_info
+        s3_write_json(self.schema_registry_uri, self.registry)
+        return new_version_num
+
+    def get_version_and_update_if_needed(self, table: str, current_columns: list):
+        current_cols = sorted(set(current_columns))
+        current_sig = self._schema_signature(current_cols)
+        table_info = self.registry.get(table)
+
+        # first time
+        if not table_info:
+            v = self._append_new_version(table, current_cols, current_sig)
+            return v, True
+
+        existing_sig = table_info.get("current_signature")
+        if not existing_sig:
+            # backward compatibility with old registry format
+            existing_sig = table_info.get("signature")
+
+        if existing_sig != current_sig:
+            v = self._append_new_version(table, current_cols, current_sig)
+            return v, True
 
         return int(table_info.get("current_version", 1)), False

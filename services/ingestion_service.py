@@ -54,13 +54,11 @@ class IngestionService:
             row_count = 0
 
             try:
-                # 1) Fetch metadata-driven columns
                 described_columns = self.sf_service.describe_object_fields(table)
 
                 if wm_col and wm_col not in described_columns:
-                    raise ValueError(f"Configured watermark_column '{wm_col}' not found/queryable in {table}")
+                    raise ValueError(f"Configured watermark_column '{wm_col}' not found in {table}")
 
-                # 2) Schema registry/versioning
                 schema_version, changed = self.schema_service.get_version_and_update_if_needed(
                     table=table,
                     current_columns=described_columns
@@ -68,7 +66,6 @@ class IngestionService:
                 if changed:
                     logger.info(f"Schema changed for {table}. Using v{schema_version}")
 
-                # 3) Chunked query + merge by Id for wide objects
                 records = self.sf_service.query_all_chunked(
                     table=table,
                     columns=described_columns,
@@ -89,14 +86,14 @@ class IngestionService:
                         records=records
                     )
 
-                    # Watermark update for BOTH full and incremental
+                    # watermark for BOTH full and incremental
                     if wm_col:
                         wm_values = [r.get(wm_col) for r in records if r.get(wm_col) is not None]
                         if wm_values:
                             watermark_end = max(wm_values)
                             self.state_service.set_watermark(table, watermark_end)
                 else:
-                    logger.info(f"No rows for table={table}; watermark unchanged")
+                    logger.info(f"No rows for {table}; watermark unchanged.")
 
             except Exception as e:
                 status = "FAILED"
