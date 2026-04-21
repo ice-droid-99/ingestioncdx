@@ -6,15 +6,40 @@ from utils.secrets import load_salesforce_credentials_from_secrets_manager
 
 logger = get_logger("salesforce_service")
 
+
 class SalesforceService:
     def __init__(self):
-        load_salesforce_credentials_from_secrets_manager()
+        # Try loading from Secrets Manager (if SF_SECRET_ID is set)
+        loaded_from_secret = load_salesforce_credentials_from_secrets_manager()
+
+        username = os.getenv("SF_USERNAME")
+        password = os.getenv("SF_PASSWORD")
+        token = os.getenv("SF_SECURITY_TOKEN")
+        domain = os.getenv("SF_DOMAIN", "login")
+
+        # Fail fast with actionable message
+        missing = [k for k, v in {
+            "SF_USERNAME": username,
+            "SF_PASSWORD": password,
+            "SF_SECURITY_TOKEN": token
+        }.items() if not v]
+
+        if missing:
+            raise RuntimeError(
+                "Missing Salesforce credentials: "
+                + ", ".join(missing)
+                + ". Set env vars directly OR set SF_SECRET_ID to a Secrets Manager JSON secret."
+            )
+
+        logger.info(
+            f"Initializing Salesforce client (domain={domain}, creds_source={'secret' if loaded_from_secret else 'env'})"
+        )
 
         self.sf = Salesforce(
-            username=os.getenv("SF_USERNAME"),
-            password=os.getenv("SF_PASSWORD"),
-            security_token=os.getenv("SF_SECURITY_TOKEN"),
-            domain=os.getenv("SF_DOMAIN", "login")
+            username=username,
+            password=password,
+            security_token=token,
+            domain=domain
         )
 
     def describe_object_fields(self, object_name: str) -> list[str]:
